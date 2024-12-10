@@ -1,0 +1,254 @@
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import winston from 'winston';
+import SpellChecker from 'spellchecker';
+import stringSimilarity from 'string-similarity';
+
+// Create Express app
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Logger setup
+const logger = winston.createLogger({
+    level: 'debug',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.printf(({ timestamp, level, message }) => {
+            return `${timestamp} - ${level}: ${message}`;
+        })
+    ),
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: 'chatbot_debug.log' })
+    ]
+});
+
+// Drone Catalog Type
+interface Drone {
+    id: number;
+    name: string;
+    price: number;
+    "load capacity": string;
+    flightTime: string;
+    cameraResolution: number;
+    maxSpeed: string;
+    weight: string;
+    range: string;
+    bestFor: string;
+}
+
+// Drone Catalog
+const droneCatalog: Drone[] = [
+    {
+        id: 1,
+        name: "HAWK 2.O",
+        price: 14999,
+        "load capacity": "50 kg",
+        flightTime: "1 hr 20 min",
+        cameraResolution: 8,
+        maxSpeed: "26 m/s",
+        weight: "8 kg",
+        range: "120 km",
+        bestFor: "City Surveillance"
+    },
+    {
+        id: 2,
+        name: "VIRAJ 2.O",
+        price: 500000,
+        "load capacity": "16 kg",
+        flightTime: "40 min",
+        cameraResolution: 8,
+        maxSpeed: "12 m/s",
+        weight: "24 kg",
+        range: "1.5 km",
+        bestFor: "perfect for firefighting and emergency operations"
+    },
+    {
+        id: 3,
+        name: "VIRAJ 1.O",
+        price: 450000,
+        "load capacity": "10 kg",
+        flightTime: "18-21 min",
+        cameraResolution: 4,
+        maxSpeed: "8 m/s",
+        weight: "14 kg",
+        range: "5 km",
+        bestFor: "Seamless real-time data and video feeds"
+    }
+];
+
+// Keyword Responses
+const keywordResponses: { [key: string]: string } = {
+    "drone types": "We offer various types of drones: Agriculture drones, Photography drones, Survey and Inspection drones and Nano drones. Each type is designed for specific use cases and skill levels.",
+    "drone models": "Our models include the Phantom, Mavic, and Inspire series. The Phantom series is great for aerial photography, Mavic for portability, and Inspire for professional cinematography.",
+    // ... (rest of the keyword responses from the original code)
+};
+
+// Preprocessing message
+function preprocessMessage(message: string): string {
+    // Convert to lowercase
+    message = message.toLowerCase();
+
+    // Spell correction
+    const words = message.split(' ');
+    const correctedWords = words.map(word => {
+        // Use spellchecker to get corrections
+        const suggestions = SpellChecker.getCorrectionsForMisspelling(word);
+        return suggestions.length > 0 ? suggestions[0] : word;
+    });
+
+    return correctedWords.join(' ');
+}
+
+// Find best keyword match
+function findBestKeywordMatch(message: string, keywords: string[]): string | null {
+    // Exact match
+    if (keywords.includes(message)) {
+        return message;
+    }
+
+    // Find best match using string similarity
+    const matches = stringSimilarity.findBestMatch(message, keywords);
+    
+    // If the best match rating is above 0.6, return it
+    return matches.bestMatch.rating > 0.6 ? matches.bestMatch.target : null;
+}
+
+// Compare Drones
+function compareDrones(drone1Name: string, drone2Name: string): string {
+    // Find drones in the catalog
+    const drone1 = droneCatalog.find(drone => 
+        drone1Name.toLowerCase().includes(drone.name.toLowerCase())
+    );
+    const drone2 = droneCatalog.find(drone => 
+        drone2Name.toLowerCase().includes(drone.name.toLowerCase())
+    );
+
+    // If either drone not found
+    if (!drone1 || !drone2) {
+        return "Sorry, I couldn't find one or both of the drones you want to compare.";
+    }
+
+    // Create comparison summary
+    return `Drone Comparison: ${drone1.name} vs ${drone2.name}
+    
+Price:
+- ${drone1.name}: ₹${drone1.price}
+- ${drone2.name}: ₹${drone2.price}
+
+Flight Time:
+- ${drone1.name}: ${drone1.flightTime} minutes
+- ${drone2.name}: ${drone2.flightTime} minutes
+
+Camera Resolution:
+- ${drone1.name}: ${drone1.cameraResolution}K
+- ${drone2.name}: ${drone2.cameraResolution}K
+
+Max Speed:
+- ${drone1.name}: ${drone1.maxSpeed}
+- ${drone2.name}: ${drone2.maxSpeed}
+
+Weight:
+- ${drone1.name}: ${drone1.weight}
+- ${drone2.name}: ${drone2.weight}
+
+Range:
+- ${drone1.name}: ${drone1.range}
+- ${drone2.name}: ${drone2.range}
+
+Best For:
+- ${drone1.name}: ${drone1.bestFor}
+- ${drone2.name}: ${drone2.bestFor}
+    `;
+}
+
+// Chatbot Response
+function chatbotResponse(message: string): string {
+    // Preprocess the message
+    const processedMessage = preprocessMessage(message);
+    logger.debug(`Processed message: ${processedMessage}`);
+
+    // Check for drone comparison
+    const comparisonKeywords = ['compare', 'comparison', 'vs', 'versus'];
+    if (comparisonKeywords.some(keyword => processedMessage.includes(keyword))) {
+        const words = processedMessage.split(' ');
+        const potentialDrones = words.filter(word => 
+            droneCatalog.some(drone => drone.name.toLowerCase().includes(word.toLowerCase()))
+        );
+
+        if (potentialDrones.length >= 2) {
+            return compareDrones(potentialDrones[0], potentialDrones[1]);
+        }
+    }
+
+    // Find best keyword match
+    const bestMatch = findBestKeywordMatch(processedMessage, Object.keys(keywordResponses));
+    
+    if (bestMatch) {
+        logger.debug(`Matched keyword: ${bestMatch}`);
+        return keywordResponses[bestMatch];
+    }
+
+    // Partial match
+    const tokens = processedMessage.split(' ');
+    for (const token of tokens) {
+        const partialMatches = Object.keys(keywordResponses).filter(keyword => 
+            keyword.includes(token) || keyword.split(' ').some(word => word.includes(token))
+        );
+
+        if (partialMatches.length > 0) {
+            logger.debug(`Partial match found: ${partialMatches[0]}`);
+            return keywordResponses[partialMatches[0]];
+        }
+    }
+
+    // Generic responses
+    const genericResponses: { [key: string]: string } = {
+        "help": "I can help you with information about drones. Try asking about drone types, models, features, prices, or services.",
+        "hello": "Hi there! Welcome to Drone Planet. How can I assist you today with drone-related queries?",
+    };
+
+    for (const [phrase, response] of Object.entries(genericResponses)) {
+        if (processedMessage.includes(phrase)) {
+            return response;
+        }
+    }
+
+    // Fallback response
+    return "I'm having trouble understanding your specific query. Could you please rephrase or ask about drones, their features, prices, or services?";
+}
+
+// Routes
+app.post('/chat', (req: Request, res: Response) => {
+    const userMessage = req.body.message;
+    
+    if (!userMessage) {
+        return res.status(400).json({ error: "Message is required" });
+    }
+
+    const botResponse = chatbotResponse(userMessage);
+    res.json({ response: botResponse });
+});
+
+app.post('/compare_drones', (req: Request, res: Response) => {
+    const { drone1, drone2 } = req.body;
+
+    if (!drone1 || !drone2) {
+        return res.status(400).json({ error: "Please provide two drone names" });
+    }
+
+    const comparisonResult = compareDrones(drone1, drone2);
+    res.json({ comparison: comparisonResult });
+});
+
+// Start server
+app.listen(PORT, () => {
+    logger.info(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
+});
+
+export default app;
